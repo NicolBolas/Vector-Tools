@@ -1,0 +1,10 @@
+syntax: glob
+*.html
+.vs/*
+Debug/*
+Release/*
+bin/*
+*.vcxproj
+*.filters
+*.sln
+Output-VisualC++Refactoring.txt
