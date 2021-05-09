@@ -63,7 +63,7 @@ namespace vector_tools
 	///If any element fails to be constructed, it will destroy all previously constructed elements.
 	///Destruction will happen via a direct call to the destructor.
 	template<typename T, typename ...Args>
-	T *placement_param_construct_count(T *first, std::size_t count, Args &&...args)
+	T *placement_emplace_construct_count(T *first, std::size_t count, Args &&...args)
 	{
 		auto curr = first;
 		try
@@ -87,63 +87,13 @@ namespace vector_tools
 	///If any element fails to be constructed, it will destroy all previously constructed elements.
 	///Destruction happens initialization using `destroy_range`.
 	template<typename T, typename Alloc, typename ...Args>
-	T *param_construct_count(T *first, std::size_t count, Alloc &alloc, Args &&...args)
+	T *emplace_construct_count(T *first, std::size_t count, Alloc &alloc, Args &&...args)
 	{
 		auto curr = first;
 		try
 		{
 			for (; std::size_t(curr - first) < count; ++curr)
 				std::allocator_traits<Alloc>::construct(alloc, curr, std::forward<Args>(args)...);
-		}
-		catch (...)
-		{
-			//curr was never successfully constructed.
-			destroy_range(first, curr, alloc);
-			throw;
-		}
-		return curr;
-	}
-
-	///Initializes `count` elements in an array, starting at `first`
-	///by copying `count` values from the `input` range.
-	///The copy will be performed by using `allocator_traits<Alloc>::construct`.
-	///Returns a pointer to the one-past-the-end element of the new array.
-	///If any element fails to be constructed, it will destroy all previously constructed elements.
-	///Destruction happens initialization using `destroy_range`.
-	template<typename T, typename Alloc>
-	T *copy_ptr_construct_count(T *first, std::size_t count, Alloc &alloc, const T *input)
-	{
-		auto curr = first;
-		try
-		{
-			for (; std::size_t(curr - first) < count; ++curr, ++input)
-				std::allocator_traits<Alloc>::construct(alloc, curr, *input);
-		}
-		catch (...)
-		{
-			//curr was never successfully constructed.
-			destroy_range(first, curr, alloc);
-			throw;
-		}
-		return curr;
-	}
-
-	///Initializes `count` elements in an array, starting at `first`
-	///by safe-moving `count` values from the `input` range.
-	///The move will be performed by using `allocator_traits<Alloc>::construct`
-	///by using `std::move_if_noexcept`.
-	///Returns a pointer to the one-past-the-end element of the new array.
-	///If a copy/move throws, it will destroy all previously constructed elements.
-	///Destruction happens initialization using `destroy_range`.
-	///But if it was a move that caused this... good luck on getting your data back ;)
-	template<typename T, typename Alloc>
-	T *safemove_ptr_construct_count(T *first, std::size_t count, Alloc &alloc, T *input)
-	{
-		auto curr = first;
-		try
-		{
-			for (; curr - first < count; ++curr, ++input)
-				std::allocator_traits<Alloc>::construct(alloc, curr, std::move_if_noexcept(*input));
 		}
 		catch (...)
 		{
@@ -161,7 +111,7 @@ namespace vector_tools
 	///If a copy throws, it will destroy all previously constructed elements.
 	///Destruction happens initialization using `destroy_range`.
 	template<typename T, typename Alloc>
-	T *copy_ptr_construct_range(T *output, Alloc &alloc, const T *input, const T *end)
+	T *copy_insert_range(T *output, Alloc &alloc, const T *input, const T *end)
 	{
 		auto curr = output;
 		try
@@ -171,7 +121,7 @@ namespace vector_tools
 		}
 		catch (...)
 		{
-			//curr was never successfully constructed.
+			//curr itself was never successfully constructed.
 			destroy_range(output, curr, alloc);
 			throw;
 		}
@@ -187,7 +137,7 @@ namespace vector_tools
 	///Destruction happens initialization using `destroy_range`.
 	///But if it was a move that caused this... good luck on getting your data back ;)
 	template<typename T, typename Alloc>
-	T *safemove_ptr_construct_range(T *output, Alloc &alloc, T *input, T *end)
+	T *safemove_insert_range(T *output, Alloc &alloc, T *input, T *end)
 	{
 		auto curr = output;
 		try
@@ -197,26 +147,89 @@ namespace vector_tools
 		}
 		catch (...)
 		{
-			//curr was never successfully constructed.
+			//curr itself was never successfully constructed.
 			destroy_range(output, curr, alloc);
 			throw;
 		}
 		return curr;
 	}
 
-	///Takes the (possibly empty) range `input/end` and shifts all of them down to `target`.
-	///The shift is done via move_if_noexcept insertion.
-	///`target` must be before `first` in the array.
+	///Takes the (possibly empty) range `input/end` and assigns all of them to the range
+	///beginning at `target` and ending at `target + (end - input)`.
+	///`target` must be before `input` in the array, but the target range may overlap.
+	///The `target` range must consist of objects of type `T`.
+	///The shift is done via move_if_noexcept assignment.
 	///If an exception is thrown, no attempt is made to try to recover,
 	///as we may have overwritten data.
-	///Returns a pointer past the end of the new location of the shifted range.
+	///Returns `target + (end - input)`.
 	template<typename T>
-	T *safemove_shift_left(T *target, T *input, T *end)
+	T *safemove_assign_shift_left(T *target, T *input, T *end)
 	{
+		if (target == input)
+			return target;
+
 		for (; input != end; ++target, ++input)
 			*target = std::move_if_noexcept(*input);
 
 		return target;
+	}
+
+	///A partition represents a set of ranges of elements. The first range has been
+	///moved from, and the second range are unconstructed memory.
+	template<typename T>
+	struct partition
+	{
+		//The start of the moved-from range.
+		T *first;
+		//The end of the moved-from range, and the start of the unconstructed range.
+		T *last;
+		//The end of the unconstructed range. May equal `last` if none of the elements are unconstructed.
+		T *end;
+	};
+
+	///Takes a range of `pos/last`. It will perform safe-move insertion/assignment
+	///to the range from `last` to `back`.
+	///The range `pos/last` consists of constructed `T`s. Any movement into them will
+	///use safe-move assignment.
+	///The range `last/back` are unconstructed storage. Any movement into them will
+	///use safe-move insertion through `alloc`.
+	///The values are always moved in reverse order.
+	///On exceptions, only previously unconstructed elements are deleted.
+	///Returns the range of the partitioned elements.
+	template<typename T, typename Alloc>
+	partition<T> safemove_partition_right(T *pos, T *last, Alloc &alloc, T *back)
+	{
+		auto src = last - 1;
+		auto new_dst = back - 1;
+		try
+		{
+			//Move-insert in reverse order, until either we run out of elements to move
+			//Or we're about to start copying over previously moved-from elements.
+			while (src != pos && new_dst != last)
+			{
+				--src; --new_dst;
+				std::allocator_traits<Alloc>::construct(alloc, new_dst, std::move_if_noexcept(*src));
+			}
+
+			//Move-assign in reverse order until we run out of elements to move.
+			auto overwrite_dst = new_dst;
+			while (src != pos)
+			{
+				--src; --overwrite_dst;
+				*overwrite_dst = std::move_if_noexcept(*src);
+			}
+
+			return { pos,
+				last < overwrite_dst ? last : overwrite_dst,
+				overwrite_dst };
+		}
+		catch (...)
+		{
+			//new_dst itself was never successfully constructed.
+			++new_dst;
+			destroy_range(new_dst, back, alloc);
+			throw;
+		}
 	}
 }
 

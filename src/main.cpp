@@ -33,9 +33,35 @@ int main(int argc, const char*argv[])
 	ints.resize(5, 20);
 	print_vector(ints);
 
-	ints = my_vector<int>(2, 20);
-
 	ints.resize(7);
+	print_vector(ints);
+
+	ints = my_vector<int>(2, 20);
+	print_vector(ints);
+
+	ints.push_back(5);
+	print_vector(ints);
+
+	ints = my_vector<int>();
+	print_vector(ints);
+
+	ints.push_back(1);
+	print_vector(ints);
+	ints.push_back(2);
+	print_vector(ints);
+	ints.push_back(3);
+	print_vector(ints);
+	ints.push_back(4);
+	print_vector(ints);
+	ints.push_back(5);
+	print_vector(ints);
+	ints.push_back(6);
+	print_vector(ints);
+	ints.push_back(7);
+	print_vector(ints);
+	ints.push_back(8);
+	print_vector(ints);
+	ints.push_back(9);
 	print_vector(ints);
 
 
